@@ -61,7 +61,7 @@ public class SchemaReader {
      * Supports both EdgeQL and JSON formats with automatic fallback.
      */
     public AbstractTable createTable(String tableName, JsonNode queryNode) {
-        return new JiffyTable(tableName, queryNode, this);
+        return new CustomTable(tableName, queryNode, this);
     }
     
     /**

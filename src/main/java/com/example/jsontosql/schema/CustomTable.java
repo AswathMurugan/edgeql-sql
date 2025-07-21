@@ -17,15 +17,15 @@ import java.util.Map;
  * This class extends AbstractTable and provides schema information by loading
  * table definitions from EdgeQL (.txt) or JSON (.json) files through SchemaReader.
  */
-public class JiffyTable extends AbstractTable {
+public class CustomTable extends AbstractTable {
     
-    private static final Logger logger = LoggerFactory.getLogger(JiffyTable.class);
+    private static final Logger logger = LoggerFactory.getLogger(CustomTable.class);
     
     private final String tableName;
     private final JsonNode queryNode;
     private final SchemaReader schemaReader;
     
-    public JiffyTable(String tableName, JsonNode queryNode, SchemaReader schemaReader) {
+    public CustomTable(String tableName, JsonNode queryNode, SchemaReader schemaReader) {
         this.tableName = tableName;
         this.queryNode = queryNode;
         this.schemaReader = schemaReader;
