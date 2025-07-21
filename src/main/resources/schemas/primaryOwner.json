@@ -1,0 +1,136 @@
+{
+  "tableName": "primaryOwner",
+  "description": "User/Person table schema for account owners and customers",
+  "version": "1.0",
+  "fields": {
+    "id": {
+      "type": "INTEGER",
+      "nullable": false,
+      "primaryKey": true,
+      "description": "Unique user identifier"
+    },
+    "firstName": {
+      "type": "VARCHAR",
+      "length": 100,
+      "nullable": false,
+      "description": "User's first name"
+    },
+    "lastName": {
+      "type": "VARCHAR",
+      "length": 100,
+      "nullable": false,
+      "description": "User's last name"
+    },
+    "middleName": {
+      "type": "VARCHAR",
+      "length": 100,
+      "description": "User's middle name"
+    },
+    "email": {
+      "type": "VARCHAR",
+      "length": 255,
+      "nullable": false,
+      "unique": true,
+      "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+      "description": "User's email address"
+    },
+    "phone": {
+      "type": "VARCHAR",
+      "length": 20,
+      "pattern": "^\\+?[1-9]\\d{1,14}$",
+      "description": "User's phone number"
+    },
+    "dateOfBirth": {
+      "type": "DATE",
+      "description": "User's date of birth"
+    },
+    "gender": {
+      "type": "VARCHAR",
+      "length": 10,
+      "allowedValues": ["MALE", "FEMALE", "OTHER", "PREFER_NOT_TO_SAY"],
+      "description": "User's gender"
+    },
+    "address": {
+      "type": "VARCHAR",
+      "length": 500,
+      "description": "User's primary address"
+    },
+    "city": {
+      "type": "VARCHAR",
+      "length": 100,
+      "description": "City of residence"
+    },
+    "state": {
+      "type": "VARCHAR",
+      "length": 100,
+      "description": "State/Province of residence"
+    },
+    "postalCode": {
+      "type": "VARCHAR",
+      "length": 20,
+      "description": "Postal/ZIP code"
+    },
+    "country": {
+      "type": "VARCHAR",
+      "length": 3,
+      "defaultValue": "USA",
+      "description": "Country code (ISO 3166-1 alpha-3)"
+    },
+    "ssn": {
+      "type": "VARCHAR",
+      "length": 20,
+      "encrypted": true,
+      "description": "Social Security Number (encrypted)"
+    },
+    "isActive": {
+      "type": "BOOLEAN",
+      "defaultValue": true,
+      "description": "User account active status"
+    },
+    "createdDate": {
+      "type": "TIMESTAMP",
+      "nullable": false,
+      "description": "Account creation timestamp"
+    },
+    "lastLogin": {
+      "type": "TIMESTAMP",
+      "description": "Last login timestamp"
+    },
+    "profilePictureUrl": {
+      "type": "VARCHAR",
+      "length": 500,
+      "description": "URL to user's profile picture"
+    }
+  },
+  "indexes": [
+    {
+      "name": "idx_email",
+      "fields": ["email"],
+      "unique": true
+    },
+    {
+      "name": "idx_name",
+      "fields": ["lastName", "firstName"]
+    },
+    {
+      "name": "idx_phone",
+      "fields": ["phone"]
+    },
+    {
+      "name": "idx_location",
+      "fields": ["city", "state", "country"]
+    }
+  ],
+  "constraints": [
+    {
+      "type": "CHECK",
+      "name": "chk_email_format",
+      "expression": "email ~* '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'"
+    },
+    {
+      "type": "CHECK",
+      "name": "chk_age_limit",
+      "expression": "dateOfBirth <= CURRENT_DATE - INTERVAL '18 years'"
+    }
+  ]
+}
