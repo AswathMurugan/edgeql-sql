@@ -5,7 +5,29 @@ A Spring Boot application that translates JSON-based queries to PostgreSQL SQL s
 
 ## API Usage
 
-### Basic Query
+### Query with Schema Path Variable
+```bash
+curl -X POST http://localhost:8088/api/v1/translate/wealthdomain \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {
+      "Account": {
+        "select": {
+          "id": true,
+          "accountNumber": true,
+          "primaryOwner": {
+            "select": {
+              "firstName": true,
+              "lastName": true
+            }
+          }
+        }
+      }
+    }
+  }'
+```
+
+### Query with Default Schema (public)
 ```bash
 curl -X POST http://localhost:8088/api/v1/translate \
   -H "Content-Type: application/json" \
@@ -17,8 +39,7 @@ curl -X POST http://localhost:8088/api/v1/translate \
           "perNumber": true
         }
       }
-    },
-     "schema": "domain"
+    }
   }'
 ```
 

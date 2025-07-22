@@ -270,7 +270,7 @@ public class SchemaReader {
             
             // Convert links to foreign key fields
             ObjectNode fieldNode = createFieldFromEdgeQLLink(linkType, constraints);
-            String fieldName = linkName.endsWith("Id") ? linkName : linkName + "Id";
+            String fieldName = linkName.endsWith("_id") ? linkName : linkName + "_id";
             fieldsNode.set(fieldName, fieldNode);
             
             logger.trace("Converted EdgeQL link: {} -> {} (as {})", linkName, linkType, fieldName);

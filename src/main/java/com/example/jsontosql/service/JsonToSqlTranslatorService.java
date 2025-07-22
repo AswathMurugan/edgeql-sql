@@ -324,10 +324,15 @@ public class JsonToSqlTranslatorService {
                     builder.scan(schemaName, targetTableName);
                     
                     RexBuilder rexBuilder = builder.getRexBuilder();
-                    String joinFieldName = fieldName + "Id";
+                    String joinFieldName = fieldName + "_id";
                     
                     // Get field indices for JOIN condition
                     // builder.peek(1) = left table (Account), builder.peek(0) = right table (primaryOwner)
+                    logger.debug("Looking for join field '{}' in left table. Available fields: {}", 
+                               joinFieldName, builder.peek(1).getRowType().getFieldNames());
+                    logger.debug("Looking for 'id' field in right table. Available fields: {}", 
+                               builder.peek(0).getRowType().getFieldNames());
+                    
                     int leftFieldIndex = getFieldIndex(builder.peek(1).getRowType(), joinFieldName);
                     int rightFieldIndex = getFieldIndex(builder.peek(0).getRowType(), "id");
                     
@@ -431,10 +436,9 @@ public class JsonToSqlTranslatorService {
                         // Example: Account.id becomes RexInputRef(INTEGER, index=0)
                         projects.add(rexBuilder.makeInputRef(fieldType, fieldIndex));
                         
-                        // Create alias with table prefix to ensure uniqueness across joins
-                        // Example: "Account" + "_" + "id" = "Account_id"
-                        // This prevents naming conflicts when multiple tables have same field names
-                        String aliasName = tableName + "_" + fieldName;
+                        // Use the column name itself as the alias
+                        // Example: "id" instead of "Account_id"
+                        String aliasName = fieldName;
                         aliases.add(aliasName);
                         
                         logger.debug("Added projection: {} -> {}", fieldName, aliasName);
@@ -588,5 +592,27 @@ public class JsonToSqlTranslatorService {
             logger.warn("Field '{}' not found in aliases or row type", fieldName);
         }
         return index;
+    }
+
+    /**
+     * Converts camelCase field names to snake_case format for database compatibility.
+     * Examples: "primaryOwner" -> "primary_owner", "accountNumber" -> "account_number"
+     */
+    private String convertToSnakeCase(String camelCase) {
+        if (camelCase == null || camelCase.isEmpty()) {
+            return camelCase;
+        }
+        
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < camelCase.length(); i++) {
+            char c = camelCase.charAt(i);
+            if (Character.isUpperCase(c) && i > 0) {
+                result.append('_');
+                result.append(Character.toLowerCase(c));
+            } else {
+                result.append(Character.toLowerCase(c));
+            }
+        }
+        return result.toString();
     }
 }

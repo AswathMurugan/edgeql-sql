@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,10 +28,27 @@ public class JsonToSqlController {
     @Autowired
     private QueryTranslator queryTranslator;
 
-    @PostMapping
-    public ResponseEntity<QueryResponse> translateQuery(@Valid @RequestBody QueryRequest request) {
+    @PostMapping("/{schema}")
+    public ResponseEntity<QueryResponse> translateQuery(
+            @PathVariable String schema,
+            @Valid @RequestBody QueryRequest request) {
         try {
-            String sql = translatorService.translateToSql(request.getQuery(), request.getSchema());
+            String sql = translatorService.translateToSql(request.getQuery(), schema);
+            QueryResponse response = new QueryResponse(sql, "POSTGRESQL");
+            return ResponseEntity.ok(response);
+        } catch (QueryTranslationException e) {
+            QueryResponse response = new QueryResponse(e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            QueryResponse response = new QueryResponse("An unexpected error occurred: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+    @PostMapping
+    public ResponseEntity<QueryResponse> translateQueryDefaultSchema(@Valid @RequestBody QueryRequest request) {
+        try {
+            String sql = translatorService.translateToSql(request.getQuery(), "public");
             QueryResponse response = new QueryResponse(sql, "POSTGRESQL");
             return ResponseEntity.ok(response);
         } catch (QueryTranslationException e) {

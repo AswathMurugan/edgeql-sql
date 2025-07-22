@@ -33,7 +33,12 @@ public class QueryTranslator {
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    public String translateQuery() throws Exception {
+    public static void main(String[] args) throws Exception {
+        System.out.println(translateQuery());
+    }
+
+
+    public static  String translateQuery() throws Exception {
         // Input JSON query
         String jsonQuery = """
         {
