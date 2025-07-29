@@ -2,6 +2,7 @@ package com.example.jsontosql.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -12,22 +13,13 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Schema reader that supports both EdgeQL (.txt) and JSON (.json) schema formats.
- * 
- * Loading priority:
- * 1. Try EdgeQL format from schemas/{tableName}.txt or schema_sample.txt
- * 2. Fall back to JSON format from schemas/{tableName}.json  
- * 3. Fall back to schemas/default.json
- * 4. Generate minimal schema dynamically from query
- * 
- * EdgeQL is used by default with JSON as fallback for maximum compatibility.
+ * Schema reader that loads table definitions from a single comprehensive schema.json file.
+ * This file contains all entity definitions in a unified format.
  */
 @Component
 public class SchemaReader {
@@ -38,23 +30,8 @@ public class SchemaReader {
     // Cache for loaded schemas to avoid repeated file reads and parsing
     private final Map<String, JsonNode> schemaCache = new ConcurrentHashMap<>();
     
-    // EdgeQL parsing patterns - improved to handle nested braces
-    private static final Pattern TYPE_PATTERN = Pattern.compile(
-        "type\\s+(\\w+)\\s*\\{", 
-        Pattern.DOTALL | Pattern.MULTILINE
-    );
-    private static final Pattern PROPERTY_PATTERN = Pattern.compile(
-        "property\\s+(\\w+):\\s*([^;\\{]+)(?:\\s*\\{([^}]*)\\})?;",
-        Pattern.DOTALL
-    );
-    private static final Pattern LINK_PATTERN = Pattern.compile(
-        "(?:multi\\s+)?link\\s+(\\w+):\\s*([^;\\{]+)(?:\\s*\\{([^}]*)\\})?;",
-        Pattern.DOTALL
-    );
-    private static final Pattern CONSTRAINT_PATTERN = Pattern.compile(
-        "constraint\\s+std::(\\w+)\\(([^)]+)\\)",
-        Pattern.DOTALL
-    );
+    // Cache for the main schema array to avoid repeated parsing
+    private ArrayNode mainSchemaArray = null;
     
     /**
      * Creates a Calcite table from unified schema configuration.
@@ -65,273 +42,182 @@ public class SchemaReader {
     }
     
     /**
-     * Loads schema configuration with hybrid format support.
+     * Loads schema configuration from the unified schema.json file.
      * 
      * @param tableName Name of the table to load schema for
-     * @return JsonNode containing the schema configuration (converted from EdgeQL if needed)
+     * @return JsonNode containing the schema configuration
      */
     public JsonNode loadTableSchema(String tableName) {
-        return schemaCache.computeIfAbsent(tableName, this::loadSchemaFromFiles);
+        return schemaCache.computeIfAbsent(tableName, this::loadSchemaFromUnifiedFile);
     }
     
     /**
-     * Loads schema from files with format detection and priority handling.
+     * Loads schema from the unified schema.json file.
      */
-    private JsonNode loadSchemaFromFiles(String tableName) {
+    private JsonNode loadSchemaFromUnifiedFile(String tableName) {
         try {
-            // PRIORITY 1: Try EdgeQL format - specific table file
-            String edgeQLPath = "schemas/" + tableName + ".txt";
-            ClassPathResource edgeQLResource = new ClassPathResource(edgeQLPath);
+            if (mainSchemaArray == null) {
+                loadMainSchemaArray();
+            }
             
-            if (edgeQLResource.exists()) {
-                JsonNode schema = loadFromEdgeQL(edgeQLResource, tableName);
-                if (schema != null) {
-                    logger.info("Loaded schema for table '{}' from EdgeQL file: {}", tableName, edgeQLPath);
-                    return schema;
+            if (mainSchemaArray != null) {
+                // Search for the table definition in the schema array
+                for (JsonNode entityNode : mainSchemaArray) {
+                    if (entityNode.has("name") && tableName.equals(entityNode.get("name").asText())) {
+                        JsonNode convertedSchema = convertToStandardFormat(entityNode, tableName);
+                        logger.info("Loaded schema for table '{}' from unified schema.json", tableName);
+                        return convertedSchema;
+                    }
                 }
             }
             
-            // PRIORITY 2: Try EdgeQL format - main schema_sample.txt file
-            ClassPathResource mainEdgeQLResource = new ClassPathResource("schemas/schema_sample.txt");
-            if (mainEdgeQLResource.exists()) {
-                JsonNode schema = loadFromEdgeQL(mainEdgeQLResource, tableName);
-                if (schema != null) {
-                    logger.info("Loaded schema for table '{}' from main EdgeQL file: schema_sample.txt", tableName);
-                    return schema;
-                }
-            }
-            
-            // PRIORITY 3: Try JSON format - specific table file
-            String jsonPath = "schemas/" + tableName + ".json";
-            ClassPathResource jsonResource = new ClassPathResource(jsonPath);
-            
-            if (jsonResource.exists()) {
-                try (InputStream inputStream = jsonResource.getInputStream()) {
-                    JsonNode schema = objectMapper.readTree(inputStream);
-                    logger.info("Loaded schema for table '{}' from JSON file: {}", tableName, jsonPath);
-                    return schema;
-                }
-            }
-            
-            // PRIORITY 4: Try JSON format - default fallback
-            ClassPathResource defaultJsonResource = new ClassPathResource("schemas/default.json");
-            if (defaultJsonResource.exists()) {
-                try (InputStream inputStream = defaultJsonResource.getInputStream()) {
-                    JsonNode schema = objectMapper.readTree(inputStream);
-                    logger.info("Using default JSON schema for table '{}'", tableName);
-                    return schema;
-                }
-            }
-            
-            // PRIORITY 5: No schema files found
-            logger.warn("No schema configuration found for table '{}', using minimal schema", tableName);
-            return objectMapper.createObjectNode();
-            
-        } catch (IOException e) {
-            logger.error("Error loading schema for table '{}': {}", tableName, e.getMessage());
-            return objectMapper.createObjectNode();
-        }
-    }
-    
-    /**
-     * Loads and parses EdgeQL schema file, converting to JSON format.
-     */
-    private JsonNode loadFromEdgeQL(ClassPathResource resource, String tableName) {
-        try (InputStream inputStream = resource.getInputStream()) {
-            String edgeQLContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-            return parseEdgeQLToJson(edgeQLContent, tableName);
-        } catch (IOException e) {
-            logger.error("Error reading EdgeQL file: {}", e.getMessage());
-            return null;
-        }
-    }
-    
-    /**
-     * Parses EdgeQL schema content and converts to JSON format.
-     * 
-     * @param edgeQLContent Full EdgeQL schema content
-     * @param tableName Specific table name to extract
-     * @return JsonNode in our standard JSON schema format
-     */
-    private JsonNode parseEdgeQLToJson(String edgeQLContent, String tableName) {
-        try {
-            ObjectNode schemaNode = objectMapper.createObjectNode();
-            schemaNode.put("tableName", tableName);
-            schemaNode.put("description", "Schema converted from EdgeQL format");
-            schemaNode.put("version", "1.0");
-            schemaNode.put("sourceFormat", "EdgeQL");
-            
-            ObjectNode fieldsNode = objectMapper.createObjectNode();
-            
-            // Find the type definition for the requested table using improved parsing
-            String typeBody = extractTypeBody(edgeQLContent, tableName);
-            
-            if (typeBody != null) {
-                parseEdgeQLTypeBody(typeBody, fieldsNode);
-                logger.debug("Found and parsed EdgeQL type '{}' with {} fields", tableName, fieldsNode.size());
-            } else {
-                logger.warn("No type definition found for '{}' in EdgeQL schema", tableName);
-            }
-            
-            // Add implicit ID field for EdgeQL types (EdgeDB tables have implicit IDs)
-            if (typeBody != null && !fieldsNode.has("id")) {
-                logger.debug("Adding implicit ID field for EdgeQL table '{}'", tableName);
-                ObjectNode idField = objectMapper.createObjectNode();
-                idField.put("type", "INTEGER");
-                idField.put("nullable", false);
-                idField.put("primaryKey", true);
-                idField.put("description", "Implicit EdgeDB ID field");
-                fieldsNode.set("id", idField);
-            }
-            
-            // If no fields were found at all, add a basic ID field as fallback
-            if (fieldsNode.size() == 0) {
-                logger.warn("Adding basic ID field as fallback for table '{}'", tableName);
-                ObjectNode idField = objectMapper.createObjectNode();
-                idField.put("type", "INTEGER");
-                idField.put("nullable", false);
-                idField.put("primaryKey", true);
-                fieldsNode.set("id", idField);
-            }
-            
-            schemaNode.set("fields", fieldsNode);
-            
-            logger.debug("Converted EdgeQL type '{}' to JSON schema with {} fields", tableName, fieldsNode.size());
-            return schemaNode;
+            logger.warn("No schema definition found for table '{}' in schema.json, using minimal schema", tableName);
+            return createMinimalSchema(tableName);
             
         } catch (Exception e) {
-            logger.error("Error parsing EdgeQL content for table '{}': {}", tableName, e.getMessage());
-            return null;
+            logger.error("Error loading schema for table '{}': {}", tableName, e.getMessage());
+            return createMinimalSchema(tableName);
         }
     }
     
     /**
-     * Extracts the body of a specific type definition from EdgeQL content.
-     * Handles nested braces correctly by counting brace depth.
+     * Loads the main schema array from schema.json file.
      */
-    private String extractTypeBody(String edgeQLContent, String typeName) {
-        // Find the start of the type definition
-        Pattern typeStartPattern = Pattern.compile("type\\s+" + typeName + "\\s*\\{", Pattern.CASE_INSENSITIVE);
-        Matcher matcher = typeStartPattern.matcher(edgeQLContent);
-        
-        if (!matcher.find()) {
-            return null;
+    private void loadMainSchemaArray() {
+        try {
+            ClassPathResource schemaResource = new ClassPathResource("schemas/schema.json");
+            if (schemaResource.exists()) {
+                try (InputStream inputStream = schemaResource.getInputStream()) {
+                    JsonNode rootNode = objectMapper.readTree(inputStream);
+                    if (rootNode.isArray()) {
+                        mainSchemaArray = (ArrayNode) rootNode;
+                        logger.info("Loaded unified schema.json with {} entities", mainSchemaArray.size());
+                    } else {
+                        logger.error("Expected schema.json to contain an array of entities");
+                    }
+                }
+            } else {
+                logger.error("schema.json file not found in schemas/ directory");
+            }
+        } catch (IOException e) {
+            logger.error("Error loading schema.json: {}", e.getMessage());
         }
+    }
+    
+    /**
+     * Converts entity definition from unified schema format to our standard format.
+     */
+    private JsonNode convertToStandardFormat(JsonNode entityNode, String tableName) {
+        ObjectNode standardSchema = objectMapper.createObjectNode();
+        standardSchema.put("tableName", tableName);
+        standardSchema.put("description", entityNode.path("description").asText(tableName));
+        standardSchema.put("version", "1.0");
+        standardSchema.put("sourceFormat", "UnifiedSchema");
         
-        int startPos = matcher.end() - 1; // Position of the opening brace
-        int braceDepth = 0;
-        int endPos = startPos;
+        ObjectNode fieldsNode = objectMapper.createObjectNode();
         
-        // Count braces to find the matching closing brace
-        for (int i = startPos; i < edgeQLContent.length(); i++) {
-            char c = edgeQLContent.charAt(i);
-            if (c == '{') {
-                braceDepth++;
-            } else if (c == '}') {
-                braceDepth--;
-                if (braceDepth == 0) {
-                    endPos = i;
-                    break;
+        // Add implicit ID field (all entities have an ID)
+        ObjectNode idField = objectMapper.createObjectNode();
+        idField.put("type", "VARCHAR"); // UUIDs are typically VARCHAR
+        idField.put("nullable", false);
+        idField.put("primaryKey", true);
+        idField.put("description", "Unique entity identifier");
+        fieldsNode.set("id", idField);
+        
+        // Process fields from the entity definition
+        if (entityNode.has("fields") && entityNode.get("fields").isArray()) {
+            for (JsonNode fieldNode : entityNode.get("fields")) {
+                String fieldName = fieldNode.path("name").asText();
+                if (!fieldName.isEmpty() && !"id".equals(fieldName)) { // Skip duplicate id field
+                    ObjectNode convertedField = convertFieldToStandardFormat(fieldNode);
+                    
+                    // If this is a link field, also create the foreign key field
+                    if (fieldNode.has("Type") && fieldNode.get("Type").has("Link")) {
+                        String linkForeignKeyField = fieldName + "_id";
+                        ObjectNode foreignKeyField = objectMapper.createObjectNode();
+                        foreignKeyField.put("type", "VARCHAR");
+                        foreignKeyField.put("nullable", true);
+                        foreignKeyField.put("description", "Foreign key for " + fieldName + " relationship");
+                        
+                        // Add foreign key reference information
+                        JsonNode linkNode = fieldNode.get("Type").get("Link");
+                        if (linkNode.has("name")) {
+                            ObjectNode foreignKey = objectMapper.createObjectNode();
+                            foreignKey.put("table", linkNode.get("name").asText());
+                            foreignKey.put("field", "id");
+                            foreignKeyField.set("foreignKey", foreignKey);
+                        }
+                        
+                        fieldsNode.set(linkForeignKeyField, foreignKeyField);
+                        logger.debug("Added foreign key field '{}' for link '{}'", linkForeignKeyField, fieldName);
+                    }
+                    
+                    fieldsNode.set(fieldName, convertedField);
                 }
             }
         }
         
-        if (braceDepth == 0 && endPos > startPos) {
-            // Extract the content between the braces (excluding the braces themselves)
-            return edgeQLContent.substring(startPos + 1, endPos);
-        }
-        
-        return null;
+        standardSchema.set("fields", fieldsNode);
+        return standardSchema;
     }
     
     /**
-     * Parses the body of an EdgeQL type definition and extracts field information.
+     * Converts a field definition from unified schema format to standard format.
      */
-    private void parseEdgeQLTypeBody(String typeBody, ObjectNode fieldsNode) {
-        // Parse property definitions
-        Matcher propertyMatcher = PROPERTY_PATTERN.matcher(typeBody);
-        while (propertyMatcher.find()) {
-            String propertyName = propertyMatcher.group(1);
-            String propertyType = propertyMatcher.group(2).trim();
-            String constraints = propertyMatcher.group(3);
+    private ObjectNode convertFieldToStandardFormat(JsonNode fieldNode) {
+        ObjectNode standardField = objectMapper.createObjectNode();
+        
+        if (fieldNode.has("Type")) {
+            JsonNode typeNode = fieldNode.get("Type");
             
-            ObjectNode fieldNode = createFieldFromEdgeQLProperty(propertyType, constraints);
-            fieldsNode.set(propertyName, fieldNode);
-            
-            logger.trace("Converted EdgeQL property: {} -> {}", propertyName, propertyType);
-        }
-        
-        // Parse link definitions (relationships)
-        Matcher linkMatcher = LINK_PATTERN.matcher(typeBody);
-        while (linkMatcher.find()) {
-            String linkName = linkMatcher.group(1);
-            String linkType = linkMatcher.group(2).trim();
-            String constraints = linkMatcher.group(3);
-            
-            // Convert links to foreign key fields
-            ObjectNode fieldNode = createFieldFromEdgeQLLink(linkType, constraints);
-            String fieldName = linkName.endsWith("_id") ? linkName : linkName + "_id";
-            fieldsNode.set(fieldName, fieldNode);
-            
-            logger.trace("Converted EdgeQL link: {} -> {} (as {})", linkName, linkType, fieldName);
-        }
-    }
-    
-    /**
-     * Creates a JSON field definition from EdgeQL property information.
-     */
-    private ObjectNode createFieldFromEdgeQLProperty(String edgeQLType, String constraints) {
-        ObjectNode fieldNode = objectMapper.createObjectNode();
-        
-        // Convert EdgeQL type to SQL type
-        String sqlType = convertEdgeQLTypeToSQL(edgeQLType);
-        fieldNode.put("type", sqlType);
-        
-        // Parse constraints if present
-        if (constraints != null && !constraints.trim().isEmpty()) {
-            parseConstraintsToJson(constraints, fieldNode);
-        }
-        
-        // Default to nullable unless specified otherwise
-        if (!fieldNode.has("nullable")) {
-            fieldNode.put("nullable", true);
-        }
-        
-        return fieldNode;
-    }
-    
-    /**
-     * Creates a JSON field definition from EdgeQL link information.
-     */
-    private ObjectNode createFieldFromEdgeQLLink(String linkType, String constraints) {
-        ObjectNode fieldNode = objectMapper.createObjectNode();
-        
-        // Links are typically foreign keys (INTEGER)
-        fieldNode.put("type", "INTEGER");
-        fieldNode.put("nullable", true);
-        
-        // Add foreign key reference information
-        if (linkType.contains("::")) {
-            String[] parts = linkType.split("::");
-            if (parts.length == 2) {
-                ObjectNode foreignKey = objectMapper.createObjectNode();
-                foreignKey.put("table", parts[1]);
-                foreignKey.put("field", "id");
-                fieldNode.set("foreignKey", foreignKey);
+            if (typeNode.has("Property")) {
+                // Handle property types
+                JsonNode propertyNode = typeNode.get("Property");
+                if (propertyNode.has("type") && propertyNode.get("type").has("name")) {
+                    String typeName = propertyNode.get("type").get("name").asText();
+                    String sqlType = convertUnifiedTypeToSQL(typeName);
+                    standardField.put("type", sqlType);
+                }
+                
+                // Handle constraints
+                if (propertyNode.has("constraints")) {
+                    parseUnifiedConstraints(propertyNode.get("constraints"), standardField);
+                }
+            } else if (typeNode.has("Link")) {
+                // Handle link types (foreign keys)
+                JsonNode linkNode = typeNode.get("Link");
+                standardField.put("type", "VARCHAR"); // Links are typically UUID references
+                standardField.put("nullable", true);
+                
+                if (linkNode.has("name")) {
+                    ObjectNode foreignKey = objectMapper.createObjectNode();
+                    foreignKey.put("table", linkNode.get("name").asText());
+                    foreignKey.put("field", "id");
+                    standardField.set("foreignKey", foreignKey);
+                }
+                
+                standardField.put("description", "Foreign key reference");
             }
         }
         
-        fieldNode.put("description", "Foreign key reference to " + linkType);
+        // Default values if not set
+        if (!standardField.has("type")) {
+            standardField.put("type", "VARCHAR");
+        }
+        if (!standardField.has("nullable")) {
+            standardField.put("nullable", true);
+        }
         
-        return fieldNode;
+        return standardField;
     }
     
     /**
-     * Converts EdgeQL data types to SQL data types.
+     * Converts unified schema types to SQL types.
      */
-    private String convertEdgeQLTypeToSQL(String edgeQLType) {
-        return switch (edgeQLType.toLowerCase().trim()) {
+    private String convertUnifiedTypeToSQL(String unifiedType) {
+        return switch (unifiedType.toLowerCase()) {
             case "std::str" -> "VARCHAR";
+            case "std::uuid" -> "VARCHAR";
             case "std::int16" -> "SMALLINT";
             case "std::int32" -> "INTEGER";
             case "std::int64" -> "BIGINT";
@@ -342,60 +228,63 @@ public class SchemaReader {
             case "std::date" -> "DATE";
             case "std::time" -> "TIME";
             case "std::decimal" -> "DECIMAL";
-            case "std::uuid" -> "VARCHAR";
             case "std::bytes" -> "BINARY";
             case "std::json" -> "VARCHAR";
             default -> {
-                logger.warn("Unknown EdgeQL type '{}', defaulting to VARCHAR", edgeQLType);
+                logger.debug("Unknown unified type '{}', defaulting to VARCHAR", unifiedType);
                 yield "VARCHAR";
             }
         };
     }
     
     /**
-     * Parses EdgeQL constraints and converts them to JSON field properties.
+     * Parses constraints from unified schema format.
      */
-    private void parseConstraintsToJson(String constraints, ObjectNode fieldNode) {
-        Matcher constraintMatcher = CONSTRAINT_PATTERN.matcher(constraints);
-        
-        while (constraintMatcher.find()) {
-            String constraintType = constraintMatcher.group(1);
-            String constraintValue = constraintMatcher.group(2);
-            
-            switch (constraintType) {
-                case "max_len_value" -> {
-                    try {
-                        int maxLength = Integer.parseInt(constraintValue);
-                        fieldNode.put("length", maxLength);
-                    } catch (NumberFormatException e) {
-                        logger.warn("Invalid max_len_value constraint: {}", constraintValue);
+    private void parseUnifiedConstraints(JsonNode constraintsNode, ObjectNode standardField) {
+        if (constraintsNode.isArray()) {
+            for (JsonNode constraintNode : constraintsNode) {
+                if (constraintNode.has("Constraint")) {
+                    JsonNode constraint = constraintNode.get("Constraint");
+                    
+                    if (constraint.has("MaxLength")) {
+                        int maxLength = constraint.get("MaxLength").path("value").asInt(255);
+                        standardField.put("length", maxLength);
                     }
-                }
-                case "min_len_value" -> {
-                    try {
-                        int minLength = Integer.parseInt(constraintValue);
-                        if (minLength > 0) {
-                            fieldNode.put("nullable", false);
-                        }
-                    } catch (NumberFormatException e) {
-                        logger.warn("Invalid min_len_value constraint: {}", constraintValue);
+                    
+                    if (constraint.has("MinLength")) {
+                        // If MinLength exists, field is typically not nullable
+                        standardField.put("nullable", false);
                     }
-                }
-                case "max_value" -> {
-                    fieldNode.put("maxValue", constraintValue);
-                }
-                case "min_value" -> {
-                    fieldNode.put("minValue", constraintValue);
-                }
-                case "exclusive" -> {
-                    fieldNode.put("unique", true);
-                }
-                default -> {
-                    logger.debug("Unhandled constraint type: {}", constraintType);
+                    
+                    if (constraint.has("Exclusive")) {
+                        standardField.put("unique", true);
+                    }
                 }
             }
         }
     }
+    
+    /**
+     * Creates a minimal schema when no definition is found.
+     */
+    private JsonNode createMinimalSchema(String tableName) {
+        ObjectNode minimalSchema = objectMapper.createObjectNode();
+        minimalSchema.put("tableName", tableName);
+        minimalSchema.put("description", "Minimal schema for " + tableName);
+        minimalSchema.put("version", "1.0");
+        
+        ObjectNode fieldsNode = objectMapper.createObjectNode();
+        ObjectNode idField = objectMapper.createObjectNode();
+        idField.put("type", "VARCHAR");
+        idField.put("nullable", false);
+        idField.put("primaryKey", true);
+        idField.put("description", "Unique identifier");
+        fieldsNode.set("id", idField);
+        
+        minimalSchema.set("fields", fieldsNode);
+        return minimalSchema;
+    }
+    
     
     /**
      * Converts JSON field definition to Calcite SqlTypeName.

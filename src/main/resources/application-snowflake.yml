@@ -1,0 +1,18 @@
+# Snowflake Configuration
+snowflake:
+  url: ${SNOWFLAKE_URL:jdbc:snowflake://your-account.snowflakecomputing.com/}
+  username: ${SNOWFLAKE_USERNAME:your_username}
+  password: ${SNOWFLAKE_PASSWORD:your_password}
+  warehouse: ${SNOWFLAKE_WAREHOUSE:COMPUTE_WH}
+  database: ${SNOWFLAKE_DATABASE:your_database}
+  schema: ${SNOWFLAKE_SCHEMA:PUBLIC}
+  role: ${SNOWFLAKE_ROLE:ACCOUNTADMIN}
+  connection-timeout: 30000
+  maximum-pool-size: 10
+  minimum-idle: 2
+
+logging:
+  level:
+    net.snowflake: DEBUG
+    com.zaxxer.hikari: DEBUG
+    com.example.jsontosql: DEBUG
